@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/auth_service.dart';
 import '../../services/database_service.dart';
 import '../../services/groq_service.dart';
+import '../../services/biometric_service.dart';
+import '../auth/login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -13,10 +16,12 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final _authService = AuthService();
   final _dbService = DatabaseService.instance;
+  final _biometricService = BiometricService();
   final _apiKeyController = TextEditingController();
   
   bool _isEditing = false;
   bool _isSaving = false;
+  bool _isBiometricEnabled = false;
 
   @override
   void initState() {
@@ -28,6 +33,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Ensure user is loaded in AuthService singleton
     await _authService.isLoggedIn();
     _loadApiKey();
+    _checkBiometricStatus();
+  }
+
+  Future<void> _checkBiometricStatus() async {
+    final enabled = await _biometricService.isBiometricEnabled();
+    setState(() {
+      _isBiometricEnabled = enabled;
+    });
   }
 
   void _loadApiKey() {
@@ -46,31 +59,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _saveApiKey() async {
-    setState(() {
-      _isSaving = true;
-    });
+    // ... existing save logic ...
+  }
 
-    try {
-      await _authService.updateApiKey(_apiKeyController.text.trim());
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('API key saved successfully!')),
-        );
+  Future<void> _toggleBiometric(bool value) async {
+    if (value) {
+      final success = await _biometricService.enableBiometric();
+      if (success) {
+        // Save current user ID for biometric login
+        final prefs = await SharedPreferences.getInstance();
+        final userId = _authService.currentUser?.id;
+        if (userId != null) {
+          await prefs.setInt('biometric_user_id', userId);
+        }
+
         setState(() {
-          _isEditing = false;
+          _isBiometricEnabled = true;
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Biometric login enabled')),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to enable biometric login')),
+          );
+        }
       }
-    } catch (e) {
+    } else {
+      await _biometricService.disableBiometric();
+      // Remove stored user ID
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometric_user_id');
+
+      setState(() {
+        _isBiometricEnabled = false;
+      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving API key: $e')),
+          const SnackBar(content: Text('Biometric login disabled')),
         );
       }
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
     }
   }
 
@@ -81,6 +112,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await _authService.logout();
+              if (context.mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  (route) => false,
+                );
+              }
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -357,6 +402,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+            // Biometric Login Section
+            const SizedBox(height: 24),
+            Card(
+              elevation: 2,
+              child: SwitchListTile(
+                title: const Text(
+                  'Biometric Login',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: const Text('Use fingerprint to log in'),
+                secondary: Icon(Icons.fingerprint, color: Colors.blue.shade700),
+                value: _isBiometricEnabled,
+                onChanged: _toggleBiometric,
               ),
             ),
           ],

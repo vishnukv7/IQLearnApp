@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/auth_service.dart';
+import '../../services/biometric_service.dart';
 import '../home/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -12,11 +14,66 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
+  final _biometricService = BiometricService();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   
   bool _isLoading = false;
+  bool _isBiometricAvailable = false;
   String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricAvailability();
+  }
+
+  Future<void> _checkBiometricAvailability() async {
+    final enabled = await _biometricService.isBiometricEnabled();
+    final prefs = await SharedPreferences.getInstance();
+    final hasUserId = prefs.containsKey('biometric_user_id');
+    
+    if (enabled && hasUserId && mounted) {
+      setState(() {
+        _isBiometricAvailable = true;
+      });
+    }
+  }
+
+  Future<void> _handleBiometricLogin() async {
+    final authenticated = await _biometricService.authenticate();
+    if (authenticated) {
+      setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final userId = prefs.getInt('biometric_user_id');
+        
+        if (userId != null) {
+          // Manually set user_id to log them in
+          await prefs.setInt('user_id', userId);
+          final isLoggedIn = await _authService.isLoggedIn();
+          
+          if (isLoggedIn && mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+            );
+            return;
+          }
+        }
+        setState(() {
+          _errorMessage = 'Login failed: User not found';
+        });
+      } catch (e) {
+        setState(() {
+          _errorMessage = 'Login error: $e';
+        });
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -218,6 +275,59 @@ class _LoginScreenState extends State<LoginScreen> {
                                   style: TextStyle(fontSize: 16),
                                 ),
                         ),
+                        
+                        // Biometric Login Button
+                        if (_isBiometricAvailable) ...[
+                          const SizedBox(height: 24),
+                          const Row(
+                            children: [
+                              Expanded(child: Divider()),
+                              Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 16),
+                                child: Text(
+                                  'OR',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                              Expanded(child: Divider()),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          Center(
+                            child: InkWell(
+                              onTap: _isLoading ? null : _handleBiometricLogin,
+                              borderRadius: BorderRadius.circular(50),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.1),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  Icons.fingerprint,
+                                  size: 48,
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Tap to Login with Fingerprint',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
